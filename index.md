@@ -5,7 +5,7 @@ You can use the editor on GitHub to maintain and preview the content for your we
 Whenever you commit to this repository, GitHub Pages will run [Jekyll](https://jekyllrb.com/) to rebuild the pages in your site, from the content in your Markdown files.
 
 #```HW1
-[HW1](HW1/IE360_R.html)
+[HW1](https://github.com/BU-IE-360/spring24-BerkerAlp/blob/4439393b1f7689bf387bbaf80bb11fe717cd780e/HW1/IE360_R.html)
 
 ### Markdown
 
