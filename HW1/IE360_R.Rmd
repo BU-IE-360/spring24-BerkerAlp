@@ -1,0 +1,446 @@
+---
+title: "IE360_HW1"
+author: "Berker Alp 2020402012"
+date: "2024-03-23"
+output: html_document
+---
+
+```{r setup, include=FALSE}
+knitr::opts_chunk$set(echo = TRUE)
+```
+
+```{r}
+require(openxlsx) #library(openxlsx)
+require(ggplot2)
+require(data.table)
+require(skimr)
+require(GGally)
+require(ggcorrplot)
+require(forecast)
+require(dplyr)
+
+options(repr.plot.width=25.4, repr.plot.height=17)
+```
+
+## Introduction
+In this homework, it's expected to pick 3 different categories of data from Central Bank of the Republic of Turkey(from EVDS System). Also, building three different models from these data sets for one main goal is required.
+
+Main goal of the research is understanding "Are economic growth of Türkiye is increasing according to production capacity utilization, empty trucks enter to Türkiye and total workforce". For that we use these independent data given below:
+
+Empty truck entry to Türkiye(TP.UNDNAKLIYE.TBG.TOPLAM.ADET): Export products needs to taken by trucks from Türkiye. In other words, some trucks has no loads should come to Türkiye to load the export products of Türkiye to deliver other countries. During the report, it will be mentioned as truck
+
+Industry capacity utilization of Türkiye(TP.TP.KKO.MA): It includes how much percent of the capacity of the industries used given month category. Amount of export defined how much product produced in other word how the industry is productive to supply exports.During the report, it will be mentioned as productivity
+
+Workforce(TP.TIG03): It defines how many people employed. Amount of workforce might be effective to define production capacity of the industry. On the other hand it shows growth of the Türkiye ecomony along people
+
+```{r}
+#Excel of independent variables(we want to estimate)
+data_link = "C:\\Users\\Berke\\Desktop\\main_data.xlsx"
+
+importTR = read.xlsx(data_link)
+str(importTR)
+```
+From Google Trend these keyworks are searched
+"Türk İş Kurumu": One of the government institution for work regulations and job seeking.
+"Kapıkule Sınır Kapısı": One of the important border gate of Türkiye to Europe.
+"Üretim": One of the keyword of published news about productivity.
+```{r}
+#csv of Google trends
+uretim_link = "C:\\Users\\Berke\\Desktop\\uretim.csv"
+sinir_link = "C:\\Users\\Berke\\Desktop\\sinir.csv"
+istihtam_link = "C:\\Users\\Berke\\Desktop\\istihdam.csv"
+
+uretim = read.csv(uretim_link,header=TRUE, stringsAsFactors=FALSE)
+sinir = read.csv(sinir_link,header=TRUE, stringsAsFactors=FALSE)
+istihtam = read.csv(istihtam_link,header=TRUE, stringsAsFactors=FALSE)
+head(uretim)
+head(sinir)
+head(istihtam)
+str(uretim)
+str(sinir)
+str(istihtam)
+```
+
+Convert data types of importTR
+
+```{r}
+require(lubridate)
+
+importTR$Tarih <- ym(importTR$Tarih)
+importTR$TP.UNDNAKLIYE.TBG.TOPLAM.ADET <- as.numeric(importTR$TP.UNDNAKLIYE.TBG.TOPLAM.ADET)
+importTR$TP.IHRACATBEC.9999 <- as.numeric(importTR$TP.IHRACATBEC.9999)
+
+uretim$Ay <-ym(uretim$Ay)
+
+sinir$Ay <- ym(sinir$Ay)
+
+istihtam$Ay <- ym(istihtam$Ay)
+
+head(importTR)
+tail(importTR)
+```
+
+```{r}
+# numerical statistics of the data
+summary_data=skim(importTR)
+print(summary_data)
+```
+
+We have know last 22 rows are empty so we will drop them.
+
+```{r}
+importTR <- na.omit(importTR)
+summary_data=skim(importTR)
+print(summary_data)
+tail(importTR)
+```
+Join of google trend excels
+```{r}
+require(tidyverse)
+google_data <- list(uretim,sinir,istihtam)
+google <- google_data %>% reduce(full_join, by='Ay')
+head(google)
+
+```
+Join of Google trend data to predicted parameters
+```{r}
+colnames(google)[colnames(google) == 'Ay'] <- 'Tarih'
+data <- list(importTR,google)
+importTR <- data %>% reduce(inner_join, by ='Tarih')
+head(importTR)
+```
+Predictor variables data
+TP.TSANAYMT2021.Y1: Industry production index. It will be used for productivity and truck. Productivity and Truck has some kind of relationship even though it is not strong. If product is produced it also will be transferred. Because of that production index related to two of them.
+TP.KTF17: Rate of commercial credit. It is especially for productivity because lower rate  may cause more investment on productivity.
+TP.AC2.TOP.A: How many company opened
+TP.KAP2.TOP.A: How many company closed. 
+Closed and opened company number defines how many people employed so they are key predictor for workforce
+TP.DK.USD.A.YTL: Turkish lira American Dollar currency. It will be used for truck since it effects its costs.
+```{r}
+sub_link = "C:\\Users\\Berke\\Desktop\\sub_data.xlsx"
+sub_data = read.xlsx(sub_link)
+str(sub_data)
+```
+
+```{r}
+sub_data$Tarih = ym(sub_data$Tarih)
+sub_data$TP.TSANAYMT2021.Y1 = as.numeric(sub_data$TP.TSANAYMT2021.Y1)
+sub_data$TP.KTF17 = as.numeric(sub_data$TP.KTF17)
+
+head(sub_data)
+```
+
+```{r}
+list <- list(importTR,sub_data)
+importTR <- list %>% reduce(inner_join, by ='Tarih')
+head(importTR)
+```
+We are setting sub data sets for the target variables with their predictor variables we like to find time series regression for them
+```{r}
+workforce <- data.frame(importTR$Tarih,importTR$TP.TIG03,importTR$Turk.Is.Kurumu,importTR$TP.AC2.TOP.A,importTR$TP.KAP2.TOP.A)
+productivity <- data.frame(importTR$Tarih,importTR$TP.KKO.MA,importTR$Uretim,importTR$TP.KTF17,importTR$TP.TSANAYMT2021.Y1)
+truck <- data.frame(importTR$Tarih,importTR$TP.UNDNAKLIYE.TBG.TOPLAM.ADET,importTR$Kapikule.Sinir.Kapisi,importTR$TP.TSANAYMT2021.Y1,importTR$TP.DK.USD.A.YTL)
+variables <- data.frame(importTR$Tarih,importTR$TP.UNDNAKLIYE.TBG.TOPLAM.ADET,importTR$TP.KKO.MA,importTR$TP.TIG03)
+```
+```{r}
+head(workforce)
+head(productivity)
+head(truck)
+head(variables)
+```
+
+From there can we see our target variables has no strong correlation. On the other hand workforce(TR.TIG03) has time dependent factors
+```{r}
+ggpairs(variables)
+```
+
+Basic knowlegde about productivity 
+```{r}
+ggpairs(productivity)
+```
+
+
+
+```{r}
+ggplot(productivity, aes(x=importTR.TP.KKO.MA)) + geom_histogram()
+ggplot(productivity, aes(x=importTR.TP.KKO.MA)) + geom_boxplot()
+ggplot(productivity,aes(x=importTR.Tarih,y=importTR.TP.KKO.MA,group=1)) +geom_line()
+```
+Line graphs of the predictors
+```{r}
+ggplot(productivity,aes(x=importTR.Tarih,y=importTR.Uretim,group=1)) +geom_line()
+ggplot(productivity,aes(x=importTR.Tarih,y=importTR.TP.KTF17,group=1)) +geom_line()
+ggplot(productivity,aes(x=importTR.Tarih,y=importTR.TP.TSANAYMT2021.Y1,group=1)) +geom_line()
+```
+We are checking autocorrelation of the series with 12 lag to understand effect of the months in the series. we can see first 6 lag are significant for productivity(importTR.TP.KKO.MA). We can say month sesaons are not effective but other seasons exists.
+
+```{r}
+acf(productivity$importTR.TP.KKO.MA)
+acf(productivity$importTR.TP.KKO.MA,12)
+```
+
+Basic knowledge about workforce
+```{r}
+ggpairs(workforce)
+```
+
+
+```{r}
+ggplot(workforce, aes(x=importTR.TP.TIG03)) + geom_histogram()
+ggplot(workforce, aes(x=importTR.TP.TIG03)) + geom_boxplot()
+ggplot(workforce,aes(x=importTR.Tarih,y=importTR.TP.TIG03,group=1)) +geom_line()
+```
+
+```{r}
+ggplot(productivity,aes(x=importTR.Tarih,y=workforce$importTR.Turk.Is.Kurumu,group=1)) +geom_line()
+ggplot(productivity,aes(x=importTR.Tarih,y=workforce$importTR.TP.AC2.TOP.A,group=1)) +geom_line()
+ggplot(productivity,aes(x=importTR.Tarih,y=workforce$importTR.TP.KAP2.TOP.A,group=1)) +geom_line()
+```
+We can see our search word "Türk İş Kurumu" has no significant relation with workforce since correlation is so less. We can also check that condition in the graphs
+
+We are checking autocorrelation of the series with 12 lag to understand effect of the months in the series. we can see first 12 lag are significant for workforce(importTR.TP.TIG03) So we can say significant seasonality exist including month seasons.
+
+```{r}
+acf(workforce$importTR.TP.TIG03)
+acf(workforce$importTR.TP.TIG03,12)
+
+```
+
+
+Basic knowledge about truck
+
+```{r}
+ggpairs(truck)
+```
+
+From the line graph we may say the data has strong seasonality and weak trend. That need further investigation.
+```{r}
+ggplot(truck, aes(x=truck$importTR.TP.UNDNAKLIYE.TBG.TOPLAM.ADET)) + geom_histogram()
+ggplot(truck, aes(x=importTR.TP.UNDNAKLIYE.TBG.TOPLAM.ADET)) + geom_boxplot()
+ggplot(truck,aes(x=importTR.Tarih,y=importTR.TP.UNDNAKLIYE.TBG.TOPLAM.ADET,group=1)) +geom_line()
+```
+
+```{r}
+ggplot(truck,aes(x=importTR.Tarih,y=truck$importTR.Kapikule.Sinir.Kapisi,group=1)) +geom_line()
+ggplot(truck,aes(x=importTR.Tarih,y=truck$importTR.TP.TSANAYMT2021.Y1,group=1)) +geom_line()
+ggplot(truck,aes(x=importTR.Tarih,y=truck$importTR.TP.DK.USD.A.YTL,group=1)) +geom_line()
+```
+We can see our search word "Kapıkule Sınır Kapısı" has no significant relation with workforce since correlation is so less. We can also check that condition in the graphs. We can say search of one of the important border gate of Türkiye is not related to entered truck to Türkiye.
+
+We are checking autocorrelation of the series with 12 lag to understand effect of the months in the series. we can see first 2 lag are significant for workforce(importTR.TP.TIG03). We can say seasonality trend is significant. In addition we see lag 12 so months can be effective
+
+```{r}
+acf(truck$importTR.TP.UNDNAKLIYE.TBG.TOPLAM.ADET)
+acf(truck$importTR.TP.UNDNAKLIYE.TBG.TOPLAM.ADET,12)
+
+```
+For our three target data, we checking linear trends. expect productivity since it is in equilibrium between 76-77, linear trends are exists. 
+
+```{r}
+ggplot(productivity ,aes(x=productivity$importTR.Tarih,y=productivity$importTR.TP.KKO.MA)) + geom_point() +geom_smooth(method='lm')
+
+ggplot(workforce ,aes(x=importTR.Tarih,y=workforce$importTR.TP.TIG03)) + geom_point() +geom_smooth(method='lm')
+
+ggplot(truck ,aes(x=importTR.Tarih,y=truck$importTR.TP.UNDNAKLIYE.TBG.TOPLAM.ADET)) + geom_point() +geom_smooth(method='lm')
+```
+Since we see seasonality and trend effects we instating dummy seasonality variables to our all data sets. These are:
+Trnd which is time change from start to end of the data
+month which is month of the individual data since lag 12 autocorelation exists it will be significant
+```{r}
+productivity <- as.data.table(productivity)
+productivity[,trnd:=1:.N]
+productivity[,mon:=as.character(month(importTR.Tarih,label=T))]
+head(productivity)
+```
+```{r}
+workforce <- as.data.table(workforce)
+workforce[,trnd:=1:.N]
+workforce[,mon:=as.character(month(importTR.Tarih,label=T))]
+head(workforce)
+```
+```{r}
+truck <- as.data.table(truck)
+truck[,trnd:=1:.N]
+truck[,mon:=as.character(month(importTR.Tarih,label=T))]
+head(truck)
+```
+From there we are checking trends of each month. This shows that how the seasonality is effective.
+```{r}
+ggplot(productivity,aes(x=productivity$importTR.Uretim,y=importTR.TP.KKO.MA)) +
+        geom_point() + geom_smooth(method=lm,linewidth=3) + facet_wrap(~mon)
+
+ggplot(productivity,aes(x=productivity$importTR.TP.KTF17,y=importTR.TP.KKO.MA)) +
+        geom_point() + geom_smooth(method=lm,linewidth=3) + facet_wrap(~mon)
+
+ggplot(productivity,aes(x=productivity$importTR.TP.TSANAYMT2021.Y1,y=importTR.TP.KKO.MA)) +
+        geom_point() + geom_smooth(method=lm,linewidth=3) + facet_wrap(~mon)
+```
+```{r}
+ggplot(workforce,aes(x=workforce$importTR.Turk.Is.Kurumu,y=importTR.TP.TIG03)) +
+        geom_point() + geom_smooth(method=lm,linewidth=3) + facet_wrap(~mon)
+
+ggplot(workforce,aes(x=workforce$importTR.TP.AC2.TOP.A,y=importTR.TP.TIG03)) +
+        geom_point() + geom_smooth(method=lm,linewidth=3) + facet_wrap(~mon)
+
+ggplot(workforce,aes(x=workforce$importTR.TP.KAP2.TOP.A,y=importTR.TP.TIG03)) +
+        geom_point() + geom_smooth(method=lm,linewidth=3) + facet_wrap(~mon)
+
+ggplot(workforce,aes(x=workforce$importTR.Tarih,y=importTR.TP.KAP2.TOP.A)) +
+        geom_point() + geom_smooth(method=lm,linewidth=3) + facet_wrap(~mon)
+```
+for our workforce data we may say it has seasonality for some months. For other estimators they have no strong seasonality effect.
+```{r}
+ggplot(truck,aes(x=truck$importTR.Kapikule.Sinir.Kapisi,y=importTR.TP.UNDNAKLIYE.TBG.TOPLAM.ADET)) +
+        geom_point() + geom_smooth(method=lm,linewidth=3) + facet_wrap(~mon)
+
+ggplot(truck,aes(x=truck$importTR.TP.TSANAYMT2021.Y1,y=importTR.TP.UNDNAKLIYE.TBG.TOPLAM.ADET)) +
+        geom_point() + geom_smooth(method=lm,linewidth=3) + facet_wrap(~mon)
+
+ggplot(truck,aes(x=truck$importTR.TP.DK.USD.A.YTL,y=importTR.TP.UNDNAKLIYE.TBG.TOPLAM.ADET)) +
+        geom_point() + geom_smooth(method=lm,linewidth=3) + facet_wrap(~mon)
+
+ggplot(truck,aes(x=truck$importTR.Tarih,y=importTR.TP.UNDNAKLIYE.TBG.TOPLAM.ADET)) +
+        geom_point() + geom_smooth(method=lm,linewidth=3) + facet_wrap(~mon)
+```
+For truck we can conclude that significant seasonality exits.
+
+##Model for Productivity
+Firstly we construct model for trend and seasonality. We can see R^2 is 0.36 so it can be improved by predictor variables
+
+```{r}
+lm_base=lm(importTR.TP.KKO.MA~trnd+mon,productivity)
+summary(lm_base)
+checkresiduals(lm_base)
+tmp1=copy(productivity)
+tmp1[,actual:=importTR.TP.KKO.MA]
+tmp1[,predicted_trend:=predict(lm_base,tmp1)]
+tmp1[,residual_trend:=actual-predicted_trend]
+#head(tmp)
+ggplot(tmp1 ,aes(x=importTR.Tarih)) +
+        geom_line(aes(y=actual,color='real')) + 
+        geom_line(aes(y=predicted_trend,color='predicted'))
+```
+
+```{r}
+lm_base=lm(importTR.TP.KKO.MA~trnd+mon+importTR.Uretim+importTR.TP.KTF17+importTR.TP.TSANAYMT2021.Y1,productivity)
+summary(lm_base)
+checkresiduals(lm_base)
+tmp1=copy(productivity)
+tmp1[,actual:=importTR.TP.KKO.MA]
+tmp1[,predicted_trend:=predict(lm_base,tmp1)]
+tmp1[,residual_trend:=actual-predicted_trend]
+#head(tmp)
+ggplot(tmp1 ,aes(x=importTR.Tarih)) +
+        geom_line(aes(y=actual,color='real')) + 
+        geom_line(aes(y=predicted_trend,color='predicted'))
+```
+Since productivity reaming belong equibrium as possible as we can use lag 1 differences to construct model for change of productivity
+```{r}
+require(zoo)
+productivity_lag1dif <- diff(zoo(productivity$importTR.TP.KKO.MA),lag=1,differences = 1,na.pad = TRUE)
+productivity$lag_dif <- productivity_lag1dif
+productivity <- na.omit(productivity)
+productivity$lag_dif <- as.numeric(productivity$lag_dif)
+head(productivity)
+```
+```{r}
+lm_base=lm(productivity$lag_dif~trnd+mon+importTR.Uretim+importTR.TP.KTF17+importTR.TP.TSANAYMT2021.Y1,productivity)
+summary(lm_base)
+checkresiduals(lm_base)
+tmp1=copy(productivity)
+tmp1[,actual:=lag_dif]
+tmp1[,predicted_trend:=predict(lm_base,tmp1)]
+tmp1[,residual_trend:=actual-predicted_trend]
+#head(tmp)
+ggplot(tmp1 ,aes(x=importTR.Tarih)) +
+        geom_line(aes(y=actual,color='real')) + 
+        geom_line(aes(y=predicted_trend,color='predicted'))
+```
+At lag1 difference model we eliminated autocorelation. However residuals are not normaly distributed. In conclusion R^2 is 0.16 and we failed to construct model
+
+##Model for Workforce
+Firstly we construct model for trend and seasonality. We can see R^2 is 0.55 so it can be improved by predictor variables
+
+```{r}
+lm_base=lm(importTR.TP.TIG03~trnd+mon,workforce)
+summary(lm_base)
+checkresiduals(lm_base)
+tmp1=copy(workforce)
+tmp1[,actual:=importTR.TP.TIG03]
+tmp1[,predicted_trend:=predict(lm_base,tmp1)]
+tmp1[,residual_trend:=actual-predicted_trend]
+#head(tmp)
+ggplot(tmp1 ,aes(x=importTR.Tarih)) +
+        geom_line(aes(y=actual,color='real')) + 
+        geom_line(aes(y=predicted_trend,color='predicted'))
+```
+
+```{r}
+lm_base=lm(importTR.TP.TIG03~trnd+mon+importTR.Turk.Is.Kurumu+importTR.TP.AC2.TOP.A+importTR.TP.KAP2.TOP.A,workforce)
+summary(lm_base)
+checkresiduals(lm_base)
+tmp1=copy(workforce)
+tmp1[,actual:=importTR.TP.TIG03]
+tmp1[,predicted_trend:=predict(lm_base,tmp1)]
+tmp1[,residual_trend:=actual-predicted_trend]
+#head(tmp)
+ggplot(tmp1 ,aes(x=importTR.Tarih)) +
+        geom_line(aes(y=actual,color='real')) + 
+        geom_line(aes(y=predicted_trend,color='predicted'))
+```
+At the  model we have so much autocorelation lags above the limit. Because of that model is unsuccessful.
+
+
+
+##Model for Truck
+Firstly we construct model for trend and seasonality. We can see R^2 is 0.36 so it can be improved by predictor variables
+```{r}
+lm_base=lm(importTR.TP.UNDNAKLIYE.TBG.TOPLAM.ADET~trnd+mon,truck)
+summary(lm_base)
+checkresiduals(lm_base)
+tmp1=copy(truck)
+tmp1[,actual:=importTR.TP.UNDNAKLIYE.TBG.TOPLAM.ADET]
+tmp1[,predicted_trend:=predict(lm_base,tmp1)]
+tmp1[,residual_trend:=actual-predicted_trend]
+#head(tmp)
+ggplot(tmp1 ,aes(x=importTR.Tarih)) +
+        geom_line(aes(y=actual,color='real')) + 
+        geom_line(aes(y=predicted_trend,color='predicted'))
+```
+
+```{r}
+lm_base=lm(importTR.TP.UNDNAKLIYE.TBG.TOPLAM.ADET~trnd+mon+importTR.Kapikule.Sinir.Kapisi+importTR.TP.TSANAYMT2021.Y1+importTR.TP.DK.USD.A.YTL,truck)
+summary(lm_base)
+checkresiduals(lm_base)
+tmp1=copy(truck)
+tmp1[,actual:=importTR.TP.UNDNAKLIYE.TBG.TOPLAM.ADET]
+tmp1[,predicted_trend:=predict(lm_base,tmp1)]
+tmp1[,residual_trend:=actual-predicted_trend]
+#head(tmp)
+ggplot(tmp1 ,aes(x=importTR.Tarih)) +
+        geom_line(aes(y=actual,color='real')) + 
+        geom_line(aes(y=predicted_trend,color='predicted'))
+```
+From there we still see lag 1 autocorelation so we can use lag 1 differencing for truck.
+
+```{r}
+truck_lag1dif <- diff(zoo(truck$importTR.TP.UNDNAKLIYE.TBG.TOPLAM.ADET),lag=1,differences = 1,na.pad = TRUE)
+truck$lag_dif <- truck_lag1dif
+truck <- na.omit(truck)
+truck$lag_dif <- as.numeric(truck$lag_dif)
+head(truck)
+```
+```{r}
+lm_base=lm(lag_dif~trnd+mon+importTR.Kapikule.Sinir.Kapisi+importTR.TP.TSANAYMT2021.Y1+importTR.TP.DK.USD.A.YTL,truck)
+summary(lm_base)
+checkresiduals(lm_base)
+tmp1=copy(truck)
+tmp1[,actual:=lag_dif]
+tmp1[,predicted_trend:=predict(lm_base,tmp1)]
+tmp1[,residual_trend:=actual-predicted_trend]
+#head(tmp)
+ggplot(tmp1 ,aes(x=importTR.Tarih)) +
+        geom_line(aes(y=actual,color='real')) + 
+        geom_line(aes(y=predicted_trend,color='predicted'))
+```
+Lag 1 differencing couldn't solved the problem so 2. model is the best model for now.
