@@ -5,7 +5,8 @@ Hello its my github page for IE360.
 ## Homeworks
 There is the homeworks and its links
 
-## [HW1_HTML](https://github.com/BU-IE-360/spring24-BerkerAlp/HW1/IE360_R.html)
+## [HW1_HTML](https://bu-ie-360.github.io/spring24-BerkerAlp/HW1/IE360_R.html)
+## [HW1_RMD](https://bu-ie-360.github.io/spring24-BerkerAlp/HW1/IE360_R.Rmd)
 
 ### Markdown
 
